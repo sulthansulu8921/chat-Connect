@@ -59,7 +59,8 @@ begin
     and id != user_id
     and (target_gender = 'everyone' or target_gender = u_gender)
     and (u_target = 'everyone' or gender = u_target)
-    and last_seen > now() - interval '1 minute' -- Only active users
+    -- FIX: Allow bots OR active users
+    and (is_bot = true OR last_seen > now() - interval '1 minute') -- Only active users
   limit 1
   for update skip locked; -- prevent race conditions
 

@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { Button } from '../components/Button';
 import { Send, Instagram, Lock } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { getBotReply } from '../lib/bot-replies';
 
 type Message = {
     id: string;
@@ -18,7 +19,7 @@ export function Chat() {
     const { id, partnerId, clearMatch } = useUserStore();
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputText, setInputText] = useState('');
-    const [partner, setPartner] = useState<{ name: string; instagram_id: string } | null>(null);
+    const [partner, setPartner] = useState<{ name: string; instagram_id: string; is_bot?: boolean } | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const [hasRevealed, setHasRevealed] = useState(false);
     const [partnerLeft, setPartnerLeft] = useState(false); // [NEW]
@@ -33,7 +34,7 @@ export function Chat() {
 
         // Fetch partner details
         const fetchPartner = async () => {
-            const { data } = await supabase.from('users').select('name, instagram_id').eq('id', partnerId).single();
+            const { data } = await supabase.from('users').select('name, instagram_id, is_bot').eq('id', partnerId).single();
             if (data) setPartner(data);
         };
         fetchPartner();
@@ -94,6 +95,54 @@ export function Chat() {
             channel.unsubscribe();
         };
     }, [id, partnerId]);
+
+    // Bot Response Logic [NEW]
+    useEffect(() => {
+        if (!partner?.is_bot || !id || !partnerId) return;
+
+        const lastMsg = messages[messages.length - 1];
+        if (!lastMsg || lastMsg.sender_id !== id) return; // Only reply if last message was from ME
+
+        const replyTimeout = setTimeout(async () => {
+            let replyContent = '';
+            let isSystem = false;
+            let shouldDisconnect = false;
+            const botMsgCount = messages.filter(m => m.sender_id === partnerId && !m.is_system).length;
+
+            if (lastMsg.is_system && lastMsg.content === 'REVEAL_REQUEST') {
+                // Auto-accept reveal
+                replyContent = 'REVEAL_REQUEST';
+                isSystem = true;
+            } else {
+                // Check limit
+                if (botMsgCount >= botDisconnectLimit.current - 1) {
+                    // Send goodbye
+                    const goodbyes = [
+                        "Hey, I gotta run! Nice chatting with you though :)",
+                        "Sorry, my friend just called. Have to go!",
+                        "It was fun talking, but I'm actually gonna head out. Byeee! 👋",
+                        "Gotta go do some work now. Catch you later!",
+                        "Imma head out. Nice meeting you!",
+                        "Sorry gotta bounce. Bye!"
+                    ];
+                    replyContent = goodbyes[Math.floor(Math.random() * goodbyes.length)];
+                    shouldDisconnect = true;
+                } else {
+                    // Generate reply
+                    replyContent = getBotReply(lastMsg.content);
+                }
+            }
+
+            // Insert bot reply into DB
+            await supabase.from('messages').insert([
+                { sender_id: partnerId, receiver_id: id, content: replyContent, is_system: isSystem }
+            ]);
+
+            // Note: Subscription will catch this insert because receiver_id=id matches the filter.
+        }, Math.random() * 2000 + 1500); // 1.5s - 3.5s delay
+
+        return () => clearTimeout(replyTimeout);
+    }, [messages, partner, id, partnerId]);
 
     // Auto-scroll
     useEffect(() => {
