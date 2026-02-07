@@ -24,6 +24,9 @@ export function Chat() {
     const [hasRevealed, setHasRevealed] = useState(false);
     const [partnerLeft, setPartnerLeft] = useState(false); // [NEW]
 
+    // Bot limits
+    const botDisconnectLimit = useRef(Math.floor(Math.random() * 3) + 3); // 3 to 5 messages
+
     // Determine if both have revealed
     const partnerRevealed = messages.some(m => m.is_system && m.content === 'REVEAL_REQUEST' && m.sender_id === partnerId);
     const meRevealed = messages.some(m => m.is_system && m.content === 'REVEAL_REQUEST' && m.sender_id === id);
@@ -98,16 +101,26 @@ export function Chat() {
 
     // Bot Response Logic [NEW]
     useEffect(() => {
-        if (!partner?.is_bot || !id || !partnerId) return;
+        if (!partner?.is_bot || !id || !partnerId) {
+            console.log("Bot Effect: Skipping", { partnerBot: partner?.is_bot, id, partnerId });
+            return;
+        }
 
         const lastMsg = messages[messages.length - 1];
-        if (!lastMsg || lastMsg.sender_id !== id) return; // Only reply if last message was from ME
+        if (!lastMsg || lastMsg.sender_id !== id) {
+            console.log("Bot Effect: Waiting for user msg", { lastMsgSender: lastMsg?.sender_id, myId: id });
+            return; // Only reply if last message was from ME
+        }
+
+        console.log("Bot Effect: Triggered reply");
 
         const replyTimeout = setTimeout(async () => {
             let replyContent = '';
             let isSystem = false;
             let shouldDisconnect = false;
             const botMsgCount = messages.filter(m => m.sender_id === partnerId && !m.is_system).length;
+
+            console.log("Bot Effect: Processing reply", { botMsgCount, limit: botDisconnectLimit.current });
 
             if (lastMsg.is_system && lastMsg.content === 'REVEAL_REQUEST') {
                 // Auto-accept reveal
@@ -134,9 +147,24 @@ export function Chat() {
             }
 
             // Insert bot reply into DB
-            await supabase.from('messages').insert([
+            console.log("Bot Effect: Inserting reply", { replyContent });
+            const { error: botError } = await supabase.from('messages').insert([
                 { sender_id: partnerId, receiver_id: id, content: replyContent, is_system: isSystem }
             ]);
+
+            if (botError) {
+                console.error("Bot Effect: Failed to send reply", botError);
+            } else {
+                console.log("Bot Effect: Reply sent successfully");
+
+                // Disconnect if goodbye sent
+                if (shouldDisconnect) {
+                    console.log("Bot Effect: Triggering disconnect");
+                    setTimeout(() => {
+                        setPartnerLeft(true);
+                    }, 2000); // Wait 2s after goodbye to leave
+                }
+            }
 
             // Note: Subscription will catch this insert because receiver_id=id matches the filter.
         }, Math.random() * 2000 + 1500); // 1.5s - 3.5s delay
