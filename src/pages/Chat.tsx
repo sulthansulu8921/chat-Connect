@@ -246,6 +246,11 @@ export function Chat() {
         if (id) {
             // [NEW] Update status in DB
             await supabase.from('users').update({ status: 'online', partner_id: null }).eq('id', id);
+
+            // [NEW] If partner was a bot, make them available again
+            if (partner?.is_bot && partnerId) {
+                await supabase.from('users').update({ status: 'matching', partner_id: null }).eq('id', partnerId);
+            }
         }
         clearMatch();
     };
